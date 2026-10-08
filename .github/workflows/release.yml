@@ -1,15 +1,8 @@
 name: release-on-lists-change
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '**.lst'
-
   schedule:
     - cron: '0 * * * *'
-
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -34,7 +27,7 @@ jobs:
           LAST=$(git describe --tags --abbrev=0 2>/dev/null || true)
 
           if [ -n "$LAST" ] && git diff --quiet "$LAST" HEAD -- '*.lst'; then
-            echo "Изменений в .lst нет, релиз не нужен"
+            echo "Изменений в .lst нет — релиз не нужен"
             exit 0
           fi
 
