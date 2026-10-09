@@ -1,5 +1,4 @@
 #!/bin/sh
-# Добавляет sigil_* в «Встроенные наборы правил» Forkop
 REPO="murflauer/sigilhost-openwrt"
 SRS_URL="https://github.com/$REPO/releases/download/srs"
 
@@ -9,10 +8,9 @@ JS=/www/luci-static/resources/view/forkop/main.js
 
 for f in $CONST $RULES $JS; do
   [ -f "$f" ] || { echo "нет файла $f"; exit 1; }
-  grep -q 'sigil_' "$f" || cp -f "$f" "$f.sigil-orig"    # бэкап оригинала
+  grep -q 'sigil_' "$f" || cp -f "$f" "$f.sigil-orig"  
 done
 
-# вставить строку $3 после первой строки, равной $2, в файле $1
 insert_after() {
   awk -v pat="$2" -v add="$3" '{print} !d && $0==pat {print add; d=1}' "$1" > "$1.tmp" \
     && cat "$1.tmp" > "$1" && rm -f "$1.tmp"
@@ -22,7 +20,6 @@ IDS=$(wget -qO- "https://api.github.com/repos/$REPO/git/trees/main?recursive=1" 
   | jsonfilter -e '@.tree[@.type="blob"].path' | grep '/.*\.lst$' | cut -d/ -f1 | sort -u \
   | tr 'A-Z' 'a-z' | sed 's/[^a-z0-9]/_/g;s/^/sigil_/')
 
-# любой sigil_* скачивается с нашего релиза
 grep -qF '"sigil_"' "$RULES" || insert_after "$RULES" 'function community_url(name) {' \
   "    if (substr(as_string(name), 0, 6) == \"sigil_\")\n        return \"$SRS_URL/\" + as_string(name) + \".srs\";"
 
