@@ -1,0 +1,45 @@
+name: Build SRS
+on:
+  push:
+    branches: [main]
+    paths: ['**/*.lst']
+  schedule:
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install sing-box
+        run: |
+          VER=1.12.0
+          curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v${VER}/sing-box-${VER}-linux-amd64.tar.gz" | tar xz
+          sudo install "sing-box-${VER}-linux-amd64/sing-box" /usr/local/bin/sing-box
+      - name: Build .srs
+        run: |
+          mkdir -p out
+          for d in */; do
+            d=${d%/}
+            ls "$d"/*.lst >/dev/null 2>&1 || continue
+            id="sigil_$(echo "$d" | tr 'A-Z' 'a-z' | sed 's/[^a-z0-9]/_/g')"
+            : > dom.txt
+            for f in "$d"/*.lst; do
+              case "$f" in *[iI][pP].lst) ;; *) cat "$f" >> dom.txt; echo >> dom.txt ;; esac
+            done
+            grep -q '[^[:space:]]' dom.txt || continue
+            jq -n --rawfile dom dom.txt '
+              ($dom | split("\n")
+                    | map(gsub("\\s+";"") | sub("^\\.";""))
+                    | map(select(length>0 and (startswith("#")|not)))) as $d
+              | {version:3, rules:[{domain_suffix:$d}]}' > "out/$id.json"
+            sing-box rule-set compile "out/$id.json" -o "out/$id.srs"
+          done
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view srs >/dev/null 2>&1 || gh release create srs --title "SRS builds" --notes "Автосборка .srs из .lst"
+          gh release upload srs out/*.srs --clobber
