@@ -1,7 +1,4 @@
 #!/bin/sh
-# sigilhost-openwrt: добавляет списки из папок репо в Podkop/Forkop
-# Для каждой папки создаётся секция sigil_<папка> (sigil_ai, sigil_roblox ...)
-# Использование: install.sh [папка ...]   (без аргументов = все папки)
 REPO="murflauer/sigilhost-openwrt"
 BRANCH="main"
 RAW="https://raw.githubusercontent.com/$REPO/$BRANCH"
@@ -12,7 +9,6 @@ else echo "Podkop/Forkop не найден"; exit 1; fi
 
 [ $# -eq 0 ] && WANT=all || WANT=$(echo "$*" | tr 'A-Z' 'a-z')
 
-# секции нового формата: config section '...'
 SECS=$(uci -q show "$PKG" | sed -n "s/^$PKG\.\([^.=]*\)=section\$/\1/p")
 TPL=""
 for s in $SECS; do
@@ -20,7 +16,6 @@ for s in $SECS; do
 done
 if [ -n "$SECS" ]; then MULTI=1; else MULTI=0; fi
 
-# копирует настройки подключения из шаблонной секции в новую ($1)
 copy_template() {
   [ -n "$TPL" ] || return 0
   uci -q export "$PKG" | awk -v s="$TPL" -v q="'" '
@@ -52,7 +47,7 @@ echo "$TREE" | jsonfilter -e '@.tree[@.type="blob"].path' | grep '\.lst$' | whil
       copy_template "$SEC"
     fi
   else
-    SEC=main        # старая версия: секция одна
+    SEC=main      
   fi
 
   case "$path" in
