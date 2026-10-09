@@ -21,6 +21,35 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Update Telegram IP list
+        run: |
+          set -euo pipefail
+          mkdir -p Telegram
+          curl -fsSL --retry 3 https://core.telegram.org/resources/cidr.txt -o /tmp/cidr.txt
+
+          tr -d '\r' < /tmp/cidr.txt \
+            | grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$|^[0-9a-fA-F:]+/[0-9]{1,3}$' \
+            | sort -u > /tmp/telegramip.lst
+
+          COUNT=$(wc -l < /tmp/telegramip.lst)
+          if [ "$COUNT" -lt 5 ]; then
+            echo "Слишком мало подсетей ($COUNT), пропускаю обновление"
+            exit 0
+          fi
+
+          cp /tmp/telegramip.lst Telegram/telegramip.lst
+
+          if git diff --quiet -- Telegram/telegramip.lst; then
+            echo "Telegram IP без изменений"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Telegram/telegramip.lst
+          git commit -m "Auto-update Telegram IP list"
+          git push
+
       - name: Release if lists changed
         env:
           GH_TOKEN: ${{ github.token }}
