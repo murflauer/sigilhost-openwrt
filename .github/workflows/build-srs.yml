@@ -1,4 +1,5 @@
 name: Build SRS
+
 on:
   push:
     branches: [main]
@@ -6,40 +7,104 @@ on:
   schedule:
     - cron: '0 * * * *'
   workflow_dispatch:
+
 permissions:
   contents: write
+
+concurrency:
+  group: build-srs
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Install sing-box
         run: |
           VER=1.12.0
           curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v${VER}/sing-box-${VER}-linux-amd64.tar.gz" | tar xz
           sudo install "sing-box-${VER}-linux-amd64/sing-box" /usr/local/bin/sing-box
+
       - name: Build .srs
         run: |
           mkdir -p out
           for d in */; do
             d=${d%/}
+            [ "$d" = "out" ] && continue
             ls "$d"/*.lst >/dev/null 2>&1 || continue
             id="sigil_$(echo "$d" | tr 'A-Z' 'a-z' | sed 's/[^a-z0-9]/_/g')"
+
             : > dom.txt
+            : > ip.txt
             for f in "$d"/*.lst; do
-              case "$f" in *[iI][pP].lst) ;; *) cat "$f" >> dom.txt; echo >> dom.txt ;; esac
+              case "$f" in
+                *[iI][pP].lst) cat "$f" >> ip.txt;  echo >> ip.txt ;;
+                *)             cat "$f" >> dom.txt; echo >> dom.txt ;;
+              esac
             done
-            grep -q '[^[:space:]]' dom.txt || continue
-            jq -n --rawfile dom dom.txt '
+
+            # unique + сортировка => результат детерминирован, одинаковый вход даёт одинаковый .srs
+            jq -n --rawfile dom dom.txt --rawfile ip ip.txt '
               ($dom | split("\n")
                     | map(gsub("\\s+";"") | sub("^\\.";""))
-                    | map(select(length>0 and (startswith("#")|not)))) as $d
-              | {version:3, rules:[{domain_suffix:$d}]}' > "out/$id.json"
+                    | map(select(length>0 and (startswith("#")|not)))
+                    | unique) as $d
+              | ($ip | split("\n")
+                     | map(gsub("\\s+";""))
+                     | map(select(length>0 and (startswith("#")|not)))
+                     | unique) as $i
+              | {version:3,
+                 rules:[ (if ($d|length)>0 then {domain_suffix:$d} else empty end),
+                         (if ($i|length)>0 then {ip_cidr:$i}       else empty end) ]}
+            ' > "out/$id.json"
+
+            if ! jq -e '.rules | length > 0' "out/$id.json" >/dev/null; then
+              echo "- $d: пусто, пропускаю"
+              rm -f "out/$id.json"
+              continue
+            fi
+
             sing-box rule-set compile "out/$id.json" -o "out/$id.srs"
+            echo "+ $id: домены=$(jq '[.rules[].domain_suffix // empty | length] | add // 0' "out/$id.json"), подсети=$(jq '[.rules[].ip_cidr // empty | length] | add // 0' "out/$id.json")"
           done
-      - name: Publish
+
+      - name: Publish (только новые и изменённые)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view srs >/dev/null 2>&1 || gh release create srs --title "SRS builds" --notes "Автосборка .srs из .lst"
-          gh release upload srs out/*.srs --clobber
+          gh release view srs >/dev/null 2>&1 || \
+            gh release create srs --title "SRS builds" --notes "Автосборка .srs из .lst"
+
+          # скачиваем то, что уже лежит в релизе, и сравниваем побайтово
+          rm -rf old && mkdir old
+          gh release download srs --dir old --pattern '*.srs' 2>/dev/null || true
+
+          UP=0; SKIP=0; DEL=0
+
+          for f in out/*.srs; do
+            [ -e "$f" ] || continue
+            n=$(basename "$f")
+            if [ -f "old/$n" ] && cmp -s "$f" "old/$n"; then
+              echo "= $n без изменений"
+              SKIP=$((SKIP+1))
+            else
+              if [ -f "old/$n" ]; then echo "~ $n обновлён"; else echo "+ $n новый"; fi
+              gh release upload srs "$f" --clobber
+              UP=$((UP+1))
+            fi
+          done
+
+          # удаляем из релиза .srs, для которых больше нет папки/списков
+          for o in old/*.srs; do
+            [ -e "$o" ] || continue
+            n=$(basename "$o")
+            if [ ! -f "out/$n" ]; then
+              echo "- $n устарел, удаляю из релиза"
+              gh release delete-asset srs "$n" --yes
+              DEL=$((DEL+1))
+            fi
+          done
+
+          echo "Итого: загружено=$UP, без изменений=$SKIP, удалено=$DEL"
